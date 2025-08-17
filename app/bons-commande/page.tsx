@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
-import { Calendar, Package, Truck, Search, Filter } from "lucide-react"
+import { Calendar, Package, Truck, Search, Filter } from 'lucide-react'
 import { format } from "date-fns"
 import { fr } from "date-fns/locale"
+import { formatFrenchNumber } from "@/lib/utils"
 
 interface BonCommande {
   id: number
@@ -21,6 +22,9 @@ interface BonCommande {
     nom: string
   }
   devis: {
+    id: number
+    numero_devis: string
+    date_creation: string
     affaire: {
       numero_affaire: string
       client: {
@@ -88,42 +92,85 @@ export default function BonsCommandePage() {
 
   const fetchBonsCommande = async () => {
     try {
-      const { data, error } = await supabase
-        .from("bons_commande")
+      const { data: devisAcceptes, error } = await supabase
+        .from("devis")
         .select(`
           *,
-          fournisseur:fournisseurs(nom),
-          devis(
-            affaire:affaires(
-              numero_affaire,
-              client:clients(nom, prenom),
-              voiture:voitures(marque, modele, immatriculation)
-            )
+          affaire:affaires(
+            numero_affaire,
+            client:clients(nom, prenom),
+            voiture:voitures(marque, modele, immatriculation)
           )
         `)
+        .eq("statut", "accepte")
         .order("created_at", { ascending: false })
 
       if (error) throw error
 
-      // Récupérer les articles pour chaque bon de commande
       const bonsWithArticles = await Promise.all(
-        (data || []).map(async (bon) => {
+        (devisAcceptes || []).map(async (devis) => {
           const { data: articles, error: articlesError } = await supabase
-            .from("bons_commande_articles")
-            .select("*")
-            .eq("bon_commande_id", bon.id)
+            .from("devis_articles")
+            .select(`
+              *,
+              article:articles(fournisseur_id, fournisseurs(nom))
+            `)
+            .eq("devis_id", devis.id)
             .order("id")
 
           if (articlesError) throw articlesError
 
-          return {
-            ...bon,
-            articles: articles || [],
-          }
-        }),
+          const articlesByFournisseur = (articles || []).reduce((acc: any, article: any) => {
+            const fournisseurId = article.article?.fournisseur_id || 'sans_fournisseur'
+            const fournisseurNom = article.article?.fournisseurs?.nom || 'Fournisseur non défini'
+            
+            if (!acc[fournisseurId]) {
+              acc[fournisseurId] = {
+                fournisseur: { nom: fournisseurNom },
+                articles: []
+              }
+            }
+            
+            acc[fournisseurId].articles.push({
+              id: article.id,
+              description: article.description,
+              quantite: article.quantite,
+              prix_unitaire: article.prix_unitaire,
+              total_ht: article.quantite * article.prix_unitaire,
+              statut: 'en_attente',
+              date_reception: null,
+              notes: null,
+              intervention: article.intervention || 'Non spécifié'
+            })
+            
+            return acc
+          }, {})
+
+          return Object.keys(articlesByFournisseur).map((fournisseurId, index) => {
+            const group = articlesByFournisseur[fournisseurId]
+            const montantTotal = group.articles.reduce((sum: number, art: any) => sum + art.total_ht, 0)
+            
+            return {
+              id: parseInt(`${devis.id}${index}`),
+              numero_bon: `BC-${devis.numero_devis}-${index + 1}`,
+              date_commande: devis.created_at,
+              statut: 'brouillon',
+              montant_total: montantTotal,
+              fournisseur: group.fournisseur,
+              devis: {
+                id: devis.id,
+                numero_devis: devis.numero_devis,
+                date_creation: devis.created_at,
+                affaire: devis.affaire
+              },
+              articles: group.articles
+            }
+          })
+        })
       )
 
-      setBonsCommande(bonsWithArticles)
+      const flattenedBons = bonsWithArticles.flat()
+      setBonsCommande(flattenedBons)
     } catch (error) {
       console.error("Erreur lors du chargement des bons de commande:", error)
     } finally {
@@ -133,18 +180,16 @@ export default function BonsCommandePage() {
 
   const updateArticleStatus = async (articleId: number, newStatus: string) => {
     try {
-      const updateData: any = { statut: newStatus }
+      const updateData: any = { statut_article: newStatus }
 
-      // Si le statut est "recu", ajouter la date de réception
       if (newStatus === "recu") {
         updateData.date_reception = new Date().toISOString().split("T")[0]
       }
 
-      const { error } = await supabase.from("bons_commande_articles").update(updateData).eq("id", articleId)
+      const { error } = await supabase.from("devis_articles").update(updateData).eq("id", articleId)
 
       if (error) throw error
 
-      // Recharger les données
       await fetchBonsCommande()
     } catch (error) {
       console.error("Erreur lors de la mise à jour du statut:", error)
@@ -161,6 +206,7 @@ export default function BonsCommandePage() {
     const matchesSearch =
       bon.numero_bon.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bon.fournisseur.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      bon.devis.numero_devis.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bon.devis.affaire.numero_affaire.toLowerCase().includes(searchTerm.toLowerCase())
 
     const matchesStatus = statusFilter === "all" || bon.statut === statusFilter
@@ -180,7 +226,6 @@ export default function BonsCommandePage() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* En-tête */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Bons de Commande</h1>
@@ -194,7 +239,6 @@ export default function BonsCommandePage() {
         </div>
       </div>
 
-      {/* Filtres */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -221,7 +265,6 @@ export default function BonsCommandePage() {
         </div>
       </div>
 
-      {/* Liste des bons de commande */}
       {filteredBonsCommande.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -260,6 +303,7 @@ export default function BonsCommandePage() {
                           {bon.fournisseur.nom}
                         </div>
                         <div className="font-medium">Affaire: {bon.devis.affaire.numero_affaire}</div>
+                        <div className="text-xs text-gray-500">Devis: {bon.devis.numero_devis}</div>
                       </div>
                       <div className="text-sm text-gray-600">
                         Client: {bon.devis.affaire.client.prenom} {bon.devis.affaire.client.nom} -
@@ -268,12 +312,11 @@ export default function BonsCommandePage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-orange-600">{bon.montant_total.toFixed(2)} €</div>
+                      <div className="text-2xl font-bold text-orange-600">{formatFrenchNumber(bon.montant_total)}</div>
                       <div className="text-sm text-gray-600">Total HT</div>
                     </div>
                   </div>
 
-                  {/* Barre de progression */}
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-medium text-gray-700">Progression des articles</span>
@@ -286,7 +329,6 @@ export default function BonsCommandePage() {
                 </CardHeader>
 
                 <CardContent>
-                  {/* Liste des articles */}
                   <div className="space-y-3">
                     <h4 className="font-medium text-gray-900 flex items-center gap-2">
                       <Package className="h-4 w-4" />
@@ -306,8 +348,8 @@ export default function BonsCommandePage() {
                               <div className="font-medium text-gray-900">{article.description}</div>
                               <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
                                 <span>Qté: {article.quantite}</span>
-                                <span>Prix unitaire: {article.prix_unitaire.toFixed(2)} €</span>
-                                <span className="font-medium">Total: {article.total_ht.toFixed(2)} €</span>
+                                <span>Prix unitaire: {formatFrenchNumber(article.prix_unitaire)}</span>
+                                <span className="font-medium">Total: {formatFrenchNumber(article.total_ht)}</span>
                                 {article.intervention && (
                                   <Badge variant="outline" className="text-xs">
                                     {article.intervention}

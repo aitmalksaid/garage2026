@@ -7,10 +7,25 @@ export const isSupabaseConfigured =
   typeof process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY === "string" &&
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.length > 0
 
+const createMockClient = () => ({
+  from: () => ({
+    select: () => Promise.resolve({ data: [], error: null }),
+    insert: () => Promise.resolve({ data: null, error: null }),
+    update: () => Promise.resolve({ data: null, error: null }),
+    delete: () => Promise.resolve({ data: null, error: null }),
+  }),
+  auth: {
+    signUp: () => Promise.resolve({ data: null, error: null }),
+    signInWithPassword: () => Promise.resolve({ data: null, error: null }),
+    signOut: () => Promise.resolve({ error: null }),
+    getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+  },
+})
+
 export const createClient = () => {
   if (!isSupabaseConfigured) {
-    console.warn("Supabase environment variables are not set.")
-    return null
+    console.warn("Supabase environment variables are not set. Using mock client.")
+    return createMockClient()
   }
   return createClientComponentClient()
 }

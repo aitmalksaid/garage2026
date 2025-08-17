@@ -17,10 +17,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Trash2, Edit, Plus, Search, ArrowLeft, FileText, Calculator, Download, X } from "lucide-react"
+import { Trash2, Edit, Plus, Search, ArrowLeft, FileText, Calculator, Download, X, CheckCircle } from "lucide-react"
 import { supabase, type Devis, type Affaire, type Article, type Fournisseur } from "@/lib/supabase/client"
 import Link from "next/link"
 import { toast } from "@/hooks/use-toast"
+import { formatFrenchNumber, parseFrenchNumber, formatInputValue } from "@/lib/utils"
 
 // Types pour les articles de devis
 type DevisArticle = {
@@ -88,6 +89,9 @@ export default function DevisPage() {
     { value: "rejete", label: "Rejeté", color: "bg-red-500" },
   ]
 
+  const [articleSuggestions, setArticleSuggestions] = useState<{ [key: number]: typeof articles }>({})
+  const [showSuggestions, setShowSuggestions] = useState<{ [key: number]: boolean }>({})
+
   // Charger toutes les données
   const fetchData = async () => {
     try {
@@ -149,6 +153,35 @@ export default function DevisPage() {
   useEffect(() => {
     fetchData()
   }, [])
+
+  const filterArticleSuggestions = (query: string, index: number) => {
+    if (!query.trim()) {
+      setArticleSuggestions((prev) => ({ ...prev, [index]: [] }))
+      setShowSuggestions((prev) => ({ ...prev, [index]: false }))
+      return
+    }
+
+    const filtered = articles
+      .filter((article) => article.description.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 5) // Limit to 5 suggestions
+
+    setArticleSuggestions((prev) => ({ ...prev, [index]: filtered }))
+    setShowSuggestions((prev) => ({ ...prev, [index]: filtered.length > 0 }))
+  }
+
+  const selectArticleFromSuggestion = (index: number, article: any) => {
+    const updatedArticles = [...devisArticles]
+    updatedArticles[index] = {
+      ...updatedArticles[index],
+      article_id: article.id,
+      description: article.description,
+      prix_ht: article.prix_ht,
+      fournisseur_id: article.fournisseur_id,
+      total: updatedArticles[index].quantite * article.prix_ht,
+    }
+    setDevisArticles(updatedArticles)
+    setShowSuggestions((prev) => ({ ...prev, [index]: false }))
+  }
 
   // Filtrer les devis
   const filteredDevis = devis.filter((d) => {
@@ -213,8 +246,66 @@ export default function DevisPage() {
     }
   }
 
-  // Mettre à jour un article
-  const updateArticle = (index: number, field: keyof DevisArticle, value: any) => {
+  const createNewArticle = async (description: string, prix_ht: number, fournisseur_id?: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("articles")
+        .insert({
+          description,
+          prix_ht,
+          fournisseur_id: fournisseur_id || null,
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Mettre à jour la liste des articles
+      setArticles((prev) => [...prev, data])
+      return data
+    } catch (error) {
+      console.error("Erreur lors de la création de l'article:", error)
+      toast({
+        title: "Erreur",
+        description: "Impossible de créer l'article automatiquement",
+        variant: "destructive",
+      })
+      return null
+    }
+  }
+
+  const createNewArticleIfNeeded = async (index: number) => {
+    const article = devisArticles[index]
+    if (!article.article_id && article.description.trim() && article.prix_ht > 0) {
+      try {
+        const { data: newArticle, error } = await supabase
+          .from("articles")
+          .insert({
+            description: article.description,
+            prix_ht: article.prix_ht,
+            fournisseur_id: article.fournisseur_id,
+          })
+          .select()
+          .single()
+
+        if (error) throw error
+
+        // Update the article with the new ID
+        const updatedArticles = [...devisArticles]
+        updatedArticles[index].article_id = newArticle.id
+        setDevisArticles(updatedArticles)
+
+        // Refresh articles list
+        fetchArticles()
+
+        console.log("[v0] New article created:", newArticle)
+      } catch (error) {
+        console.error("[v0] Error creating new article:", error)
+      }
+    }
+  }
+
+  const updateArticle = async (index: number, field: keyof DevisArticle, value: any) => {
     const updatedArticles = [...devisArticles]
     updatedArticles[index] = { ...updatedArticles[index], [field]: value }
 
@@ -223,11 +314,31 @@ export default function DevisPage() {
       updatedArticles[index].total = updatedArticles[index].quantite * updatedArticles[index].prix_ht
     }
 
+    if (field === "description") {
+      // Clear article_id when description changes manually
+      updatedArticles[index].article_id = undefined
+
+      // Filter suggestions
+      filterArticleSuggestions(value, index)
+    }
+
+    if (field === "prix_ht" && !updatedArticles[index].article_id) {
+      setTimeout(() => createNewArticleIfNeeded(index), 500) // Delay to allow user to finish typing
+    }
+
     setDevisArticles(updatedArticles)
   }
 
-  // Sélectionner un article du catalogue
   const selectArticleFromCatalog = (index: number, articleId: string) => {
+    if (articleId === "new") {
+      // Mode création d'un nouvel article
+      updateArticle(index, "article_id", undefined)
+      updateArticle(index, "description", "")
+      updateArticle(index, "prix_ht", 0)
+      updateArticle(index, "fournisseur_id", undefined)
+      return
+    }
+
     const article = articles.find((a) => a.id.toString() === articleId)
     if (article) {
       updateArticle(index, "article_id", article.id)
@@ -541,6 +652,46 @@ export default function DevisPage() {
             border-top: 1px solid #000;
             padding-top: 10px;
           }
+          .footer-section {
+            position: fixed;
+            bottom: 2cm;
+            left: 0;
+            right: 0;
+            width: 100%;
+            margin: 0;
+            padding: 0 20px;
+            box-sizing: border-box;
+          }
+          .company-stamp {
+            position: absolute;
+            top: -20px;
+            right: 0;
+            width: 200px;
+            height: 80px;
+            border: 2px solid #4169E1;
+            background-color: #E6F3FF;
+            color: #4169E1;
+            font-size: 10px;
+            font-weight: bold;
+            text-align: center;
+            padding: 5px;
+            transform: rotate(-5deg);
+          }
+          .legal-note {
+            text-align: center;
+            font-weight: bold;
+            font-size: 12px;
+            margin: 20px 0;
+            text-decoration: underline;
+          }
+          .company-info-box {
+            border: 2px solid #000;
+            padding: 10px;
+            margin-top: 20px;
+            font-size: 10px;
+            text-align: center;
+            line-height: 1.4;
+          }
         </style>
       </head>
       <body>
@@ -647,10 +798,10 @@ export default function DevisPage() {
                   <td>${article.intervention}</td>
                   <td class="description">${article.description}</td>
                   <td>${article.quantite}</td>
-                  <td>${article.prix_ht.toFixed(2).replace(".", ",")}</td>
-                  <td>${totalHT.toFixed(2).replace(".", ",")}</td>
+                  <td>${formatFrenchNumber(article.prix_ht)}</td>
+                  <td>${formatFrenchNumber(totalHT)}</td>
                   <td>${tvaPercent}</td>
-                  <td>${totalTTC.toFixed(2).replace(".", ",")}</td>
+                  <td>${formatFrenchNumber(totalTTC)}</td>
                 </tr>
               `
                 })
@@ -775,6 +926,9 @@ export default function DevisPage() {
           Arrêté le présent devis à la somme de ${numberToWords(totalTTC)} Dirhams
         </div>
 
+        <div class="footer-section">
+          <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/image-EcerNu4CeepfFaFyNIgeWNsMiYWs8l.png" alt="Footer Carrosserie Nouvelle Génération" style="width: 100%; height: auto;" />
+        </div>
 
       </div>
     </body>
@@ -909,20 +1063,48 @@ export default function DevisPage() {
     }
   }
 
-  // Sauvegarder un devis
-  const handleSaveDevis = async () => {
-    if (!formData.numero_devis.trim() || !formData.affaire_id) {
-      toast({
-        title: "Erreur",
-        description: "Le numéro de devis et l'affaire sont obligatoires",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const totals = calculateTotals()
-
+  const fetchArticles = async () => {
     try {
+      const { data, error } = await supabase.from("articles").select("*").order("description")
+      if (error) throw error
+      setArticles(data || [])
+    } catch (error) {
+      console.error("Error fetching articles:", error)
+    }
+  }
+
+  const handleSaveDevis = async () => {
+    try {
+      setLoading(true)
+
+      const updatedDevisArticles = [...devisArticles]
+      for (let i = 0; i < updatedDevisArticles.length; i++) {
+        const article = updatedDevisArticles[i]
+
+        // Si l'article n'a pas d'ID et a une description, le créer
+        if (!article.article_id && article.description.trim() && article.prix_ht > 0) {
+          const newArticle = await createNewArticle(article.description, article.prix_ht, article.fournisseur_id)
+
+          if (newArticle) {
+            updatedDevisArticles[i].article_id = newArticle.id
+          }
+        }
+      }
+
+      // Mettre à jour l'état avec les nouveaux IDs d'articles
+      setDevisArticles(updatedDevisArticles)
+
+      if (!formData.numero_devis.trim() || !formData.affaire_id) {
+        toast({
+          title: "Erreur",
+          description: "Le numéro de devis et l'affaire sont obligatoires",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const totals = calculateTotals()
+
       const devisData = {
         numero_devis: formData.numero_devis,
         date_devis: formData.date_devis,
@@ -957,7 +1139,7 @@ export default function DevisPage() {
       }
 
       // Insérer les articles du devis
-      const articlesData = devisArticles
+      const articlesData = updatedDevisArticles
         .filter((article) => article.description.trim())
         .map((article) => ({
           devis_id: devisId,
@@ -984,6 +1166,8 @@ export default function DevisPage() {
         description: "Impossible de sauvegarder le devis",
         variant: "destructive",
       })
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -1013,7 +1197,29 @@ export default function DevisPage() {
     return statutsDevis.find((s) => s.value === statut) || statutsDevis[0]
   }
 
-  const totals = calculateTotals()
+  const calculateTotalHT = () => {
+    return (
+      devisArticles.reduce((sum, article) => sum + article.total, 0) +
+      formData.mo_tolerie +
+      formData.mo_peinture +
+      formData.mo_mecanique +
+      formData.mo_electrique
+    )
+  }
+
+  const calculateTotalTVA = () => {
+    return (
+      devisArticles.reduce((sum, article) => {
+        const tva = article.intervention === "OCCASION" ? 0 : article.total * 0.2
+        return sum + tva
+      }, 0) +
+      (formData.mo_tolerie + formData.mo_peinture + formData.mo_mecanique + formData.mo_electrique) * 0.2
+    )
+  }
+
+  const calculateTotalTTC = () => {
+    return calculateTotalHT() + calculateTotalTVA()
+  }
 
   if (loading) {
     return (
@@ -1121,7 +1327,7 @@ export default function DevisPage() {
                           <TableCell>
                             <Badge className={`${statutInfo.color} text-white`}>{statutInfo.label}</Badge>
                           </TableCell>
-                          <TableCell className="font-medium">{devis.montant_ttc.toFixed(2)} €</TableCell>
+                          <TableCell className="font-medium">{formatFrenchNumber(devis.montant_ttc)}</TableCell>
                           <TableCell>{new Date(devis.date_devis).toLocaleDateString("fr-FR")}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-2">
@@ -1249,27 +1455,52 @@ export default function DevisPage() {
                       <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                         <div className="md:col-span-2 space-y-2">
                           <Label>Description</Label>
-                          <div className="space-y-2">
-                            <Select
-                              value={article.article_id?.toString() || ""}
-                              onValueChange={(value) => selectArticleFromCatalog(index, value)}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choisir du catalogue" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {articles.map((art) => (
-                                  <SelectItem key={art.id} value={art.id.toString()}>
-                                    {art.description} - {art.prix_ht.toFixed(2)}€
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                          <div className="relative">
                             <Input
                               value={article.description}
                               onChange={(e) => updateArticle(index, "description", e.target.value)}
-                              placeholder="Description de l'article"
+                              onFocus={() => filterArticleSuggestions(article.description, index)}
+                              onBlur={() =>
+                                setTimeout(() => setShowSuggestions((prev) => ({ ...prev, [index]: false })), 200)
+                              }
+                              placeholder="Saisir ou rechercher un article..."
+                              className={
+                                !article.article_id && article.description.trim() ? "border-green-300 bg-green-50" : ""
+                              }
                             />
+
+                            {showSuggestions[index] && articleSuggestions[index]?.length > 0 && (
+                              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                                {articleSuggestions[index].map((suggestion) => (
+                                  <div
+                                    key={suggestion.id}
+                                    className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                                    onMouseDown={() => selectArticleFromSuggestion(index, suggestion)}
+                                  >
+                                    <div className="font-medium text-sm">{suggestion.description}</div>
+                                    <div className="text-xs text-gray-500">
+                                      Prix: {formatFrenchNumber(suggestion.prix_ht)}
+                                      {suggestion.fournisseur_id &&
+                                        ` • Fournisseur: ${fournisseurs.find((f) => f.id === suggestion.fournisseur_id)?.nom || "N/A"}`}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {!article.article_id && article.description.trim() && (
+                              <div className="text-xs text-green-600 flex items-center mt-1">
+                                <Plus className="h-3 w-3 mr-1" />
+                                Nouvel article - sera ajouté automatiquement au catalogue
+                              </div>
+                            )}
+
+                            {article.article_id && (
+                              <div className="text-xs text-blue-600 flex items-center mt-1">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Article du catalogue (prix modifiable)
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -1303,20 +1534,29 @@ export default function DevisPage() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label>Prix HT (€)</Label>
+                          <Label>Prix HT</Label>
                           <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={article.prix_ht}
-                            onChange={(e) => updateArticle(index, "prix_ht", Number.parseFloat(e.target.value) || 0)}
+                            type="text"
+                            value={formatInputValue(article.prix_ht)}
+                            onChange={(e) => {
+                              const parsed = parseFrenchNumber(e.target.value)
+                              updateArticle(index, "prix_ht", parsed)
+                            }}
+                            className={!article.article_id ? "border-green-300 bg-green-50" : ""}
+                            placeholder="0,00"
                           />
+                          {article.article_id && (
+                            <div className="text-xs text-blue-600">
+                              Prix modifiable (original:{" "}
+                              {formatFrenchNumber(articles.find((a) => a.id === article.article_id)?.prix_ht || 0)})
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-right">
                             <div className="text-sm text-gray-500">Total</div>
-                            <div className="font-medium">{article.total.toFixed(2)} €</div>
+                            <div className="font-medium">{formatFrenchNumber(article.total)}</div>
                           </div>
                           {devisArticles.length > 1 && (
                             <Button
@@ -1364,53 +1604,55 @@ export default function DevisPage() {
                 <h3 className="text-lg font-semibold">Main d'Œuvre</h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="mo_tolerie">Tôlerie (€)</Label>
+                    <Label htmlFor="mo_tolerie">Tôlerie</Label>
                     <Input
                       id="mo_tolerie"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.mo_tolerie}
-                      onChange={(e) => setFormData({ ...formData, mo_tolerie: Number.parseFloat(e.target.value) || 0 })}
+                      type="text"
+                      value={formatInputValue(formData.mo_tolerie)}
+                      onChange={(e) => {
+                        const parsed = parseFrenchNumber(e.target.value)
+                        setFormData({ ...formData, mo_tolerie: parsed })
+                      }}
+                      placeholder="0,00"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="mo_peinture">Peinture (€)</Label>
+                    <Label htmlFor="mo_peinture">Peinture</Label>
                     <Input
                       id="mo_peinture"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.mo_peinture}
-                      onChange={(e) =>
-                        setFormData({ ...formData, mo_peinture: Number.parseFloat(e.target.value) || 0 })
-                      }
+                      type="text"
+                      value={formatInputValue(formData.mo_peinture)}
+                      onChange={(e) => {
+                        const parsed = parseFrenchNumber(e.target.value)
+                        setFormData({ ...formData, mo_peinture: parsed })
+                      }}
+                      placeholder="0,00"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="mo_mecanique">Mécanique (€)</Label>
+                    <Label htmlFor="mo_mecanique">Mécanique</Label>
                     <Input
                       id="mo_mecanique"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.mo_mecanique}
-                      onChange={(e) =>
-                        setFormData({ ...formData, mo_mecanique: Number.parseFloat(e.target.value) || 0 })
-                      }
+                      type="text"
+                      value={formatInputValue(formData.mo_mecanique)}
+                      onChange={(e) => {
+                        const parsed = parseFrenchNumber(e.target.value)
+                        setFormData({ ...formData, mo_mecanique: parsed })
+                      }}
+                      placeholder="0,00"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="mo_electrique">Électrique (€)</Label>
+                    <Label htmlFor="mo_electrique">Électrique</Label>
                     <Input
                       id="mo_electrique"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.mo_electrique}
-                      onChange={(e) =>
-                        setFormData({ ...formData, mo_electrique: Number.parseFloat(e.target.value) || 0 })
-                      }
+                      type="text"
+                      value={formatInputValue(formData.mo_electrique)}
+                      onChange={(e) => {
+                        const parsed = parseFrenchNumber(e.target.value)
+                        setFormData({ ...formData, mo_electrique: parsed })
+                      }}
+                      placeholder="0,00"
                     />
                   </div>
                 </div>
@@ -1427,15 +1669,17 @@ export default function DevisPage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-right">
                   <div>
                     <div className="text-sm text-gray-500">Total HT</div>
-                    <div className="text-xl font-medium">{totals.totalHT} €</div>
+                    <div className="text-right font-medium">Total HT: {formatFrenchNumber(calculateTotalHT())}</div>
                   </div>
                   <div>
                     <div className="text-sm text-gray-500">TVA</div>
-                    <div className="text-xl font-medium">{totals.totalTVA} €</div>
+                    <div className="text-right font-medium">TVA: {formatFrenchNumber(calculateTotalTVA())}</div>
                   </div>
                   <div>
                     <div className="text-sm text-gray-500">Total TTC</div>
-                    <div className="text-2xl font-bold text-green-600">{totals.totalTTC} €</div>
+                    <div className="text-right font-bold text-lg">
+                      Total TTC: {formatFrenchNumber(calculateTotalTTC())}
+                    </div>
                   </div>
                 </div>
               </div>

@@ -21,6 +21,7 @@ import {
   Line,
 } from "recharts"
 import { TrendingUp, TrendingDown, DollarSign, FileText, Car, Users, Package, Calculator } from "lucide-react"
+import { formatFrenchNumber } from "@/lib/utils"
 
 interface AnalyticsData {
   totalAffaires: number
@@ -228,7 +229,7 @@ export default function AnalyticsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Revenus Totaux</p>
-                <p className="text-2xl font-bold text-green-600">{data.totalRevenues.toFixed(0)} €</p>
+                <p className="text-2xl font-bold text-green-600">{formatFrenchNumber(data.totalRevenues, 0)}</p>
               </div>
               <TrendingUp className="h-8 w-8 text-green-600" />
             </div>
@@ -240,7 +241,7 @@ export default function AnalyticsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Dépenses Totales</p>
-                <p className="text-2xl font-bold text-red-600">{data.totalDepenses.toFixed(0)} €</p>
+                <p className="text-2xl font-bold text-red-600">{formatFrenchNumber(data.totalDepenses, 0)}</p>
               </div>
               <TrendingDown className="h-8 w-8 text-red-600" />
             </div>
@@ -253,7 +254,7 @@ export default function AnalyticsPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Bénéfice Net</p>
                 <p className={`text-2xl font-bold ${data.beneficeTotal >= 0 ? "text-green-600" : "text-red-600"}`}>
-                  {data.beneficeTotal.toFixed(0)} €
+                  {formatFrenchNumber(data.beneficeTotal, 0)}
                 </p>
               </div>
               <DollarSign className={`h-8 w-8 ${data.beneficeTotal >= 0 ? "text-green-600" : "text-red-600"}`} />
@@ -390,16 +391,16 @@ export default function AnalyticsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-3">
                       <div>
                         <p className="text-xs text-gray-500">Revenus Prévus</p>
-                        <p className="font-medium text-blue-600">{affaire.revenus_prevus.toFixed(2)} €</p>
+                        <p className="font-medium text-blue-600">{formatFrenchNumber(affaire.revenus_prevus)}</p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500">Dépenses Réelles</p>
-                        <p className="font-medium text-red-600">{affaire.depenses_reelles.toFixed(2)} €</p>
+                        <p className="font-medium text-red-600">{formatFrenchNumber(affaire.depenses_reelles)}</p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500">Bénéfice</p>
                         <p className={`font-medium ${affaire.benefice >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {affaire.benefice.toFixed(2)} €
+                          {formatFrenchNumber(affaire.benefice)}
                         </p>
                       </div>
                       <div>
@@ -447,7 +448,7 @@ export default function AnalyticsPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-medium text-green-600">{client.totalRevenues.toFixed(2)} €</p>
+                      <p className="font-medium text-green-600">{formatFrenchNumber(client.totalRevenues)}</p>
                       <p className="text-xs text-gray-500">Chiffre d'affaires</p>
                     </div>
                   </div>

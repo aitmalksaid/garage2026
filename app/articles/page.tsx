@@ -16,10 +16,11 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Trash2, Edit, Plus, Search, ArrowLeft, Package, Euro, Building2 } from "lucide-react"
+import { Trash2, Edit, Plus, Search, ArrowLeft, Package, Building2 } from "lucide-react"
 import { supabase, type Article, type Fournisseur } from "@/lib/supabase/client"
 import Link from "next/link"
 import { toast } from "@/hooks/use-toast"
+import { formatFrenchNumber, parseFrenchNumber, formatInputValue } from "@/lib/utils"
 
 // Type étendu pour les jointures
 type ArticleComplete = Article & {
@@ -112,7 +113,7 @@ export default function ArticlesPage() {
   const handleEditArticle = (article: Article) => {
     setFormData({
       description: article.description,
-      prix_ht: article.prix_ht.toString(),
+      prix_ht: formatInputValue(article.prix_ht),
       fournisseur_id: article.fournisseur_id?.toString() || "",
     })
     setEditingArticle(article)
@@ -130,10 +131,11 @@ export default function ArticlesPage() {
       return
     }
 
-    if (!formData.prix_ht || isNaN(Number.parseFloat(formData.prix_ht))) {
+    const prixParsed = parseFrenchNumber(formData.prix_ht)
+    if (isNaN(prixParsed) || prixParsed <= 0) {
       toast({
         title: "Erreur",
-        description: "Le prix HT doit être un nombre valide",
+        description: "Le prix HT doit être un nombre valide supérieur à 0",
         variant: "destructive",
       })
       return
@@ -142,7 +144,7 @@ export default function ArticlesPage() {
     try {
       const dataToSave = {
         description: formData.description,
-        prix_ht: Number.parseFloat(formData.prix_ht),
+        prix_ht: prixParsed,
         fournisseur_id: formData.fournisseur_id ? Number.parseInt(formData.fournisseur_id) : null,
       }
 
@@ -285,8 +287,7 @@ export default function ArticlesPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1 font-medium text-green-600">
-                            <Euro className="h-4 w-4" />
-                            {article.prix_ht.toFixed(2)}
+                            {formatFrenchNumber(article.prix_ht)}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -345,12 +346,10 @@ export default function ArticlesPage() {
                 <Label htmlFor="prix_ht">Prix HT (€) *</Label>
                 <Input
                   id="prix_ht"
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
                   value={formData.prix_ht}
                   onChange={(e) => setFormData({ ...formData, prix_ht: e.target.value })}
-                  placeholder="250.00"
+                  placeholder="250,00"
                 />
               </div>
               <div className="space-y-2">
